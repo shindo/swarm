@@ -20,6 +20,7 @@ BuildRequires:	boost%{boost_ver}-devel, boost%{boost_ver}-iostreams, boost%{boos
 BuildRequires:  curl-devel
 BuildRequires:	cmake uriparser-devel libidn-devel
 BuildRequires:  libblackhole-devel
+BuildRequires:  libhandystats-devel
 
 Obsoletes: srw
 

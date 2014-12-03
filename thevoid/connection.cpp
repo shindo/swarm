@@ -19,6 +19,13 @@
 #include <boost/bind.hpp>
 #include <iostream>
 
+#ifdef HAVE_HANDYSTATS
+#include <handystats/measuring_points.hpp>
+#include <handystats/chrono.hpp>
+#else
+#include "handystats/stubs.h"
+#endif
+
 #include "server_p.hpp"
 #include "stream_p.hpp"
 #include "stockreplies_p.hpp"
@@ -44,6 +51,7 @@ do { \
 	boost::system::error_code ignored_ec; \
 	m_socket.shutdown(boost::asio::socket_base::shutdown_both, ignored_ec); \
 	--m_server->m_data->active_connections_counter; \
+	HANDY_COUNTER_DECREMENT("thevoid.active_connections"); \
 	m_handler.reset(); \
 	return; \
 } while (0)
@@ -118,6 +126,7 @@ connection<T>::~connection()
 	if (m_server) {
 		CONNECTION_INFO("connection to client closed");
 		--m_server->m_data->connections_counter;
+		HANDY_COUNTER_DECREMENT("thevoid.connections");
 	}
 
 	if (m_handler) {
@@ -149,6 +158,7 @@ void connection<T>::start(const std::string &local_endpoint)
 	m_access_remote = boost::lexical_cast<std::string>(m_endpoint);
 
 	++m_server->m_data->connections_counter;
+	HANDY_COUNTER_INCREMENT("thevoid.connections");
 
 	CONNECTION_INFO("connection to client opened")
 		("local", m_access_local)
@@ -417,8 +427,10 @@ void connection<T>::close_impl(const boost::system::error_code &err)
 		("unreceived_size", m_content_length)
 		("state", make_state_attribute());
 
-	if (m_handler)
+	if (m_handler) {
 		--m_server->m_data->active_connections_counter;
+		HANDY_COUNTER_DECREMENT("thevoid.active_connections");
+	}
 	m_handler.reset();
 	m_request_processing_was_finished = true;
 
@@ -505,6 +517,39 @@ void connection<T>::print_access_log()
 
 	unsigned long long delta = 1000000ull * (end.tv_sec - m_access_start.tv_sec) + end.tv_usec - m_access_start.tv_usec;
 
+#ifdef HAVE_HANDYSTATS
+	std::string response_code_group;
+	if (m_access_status >= 100 && m_access_status <= 599) {
+		response_code_group = std::to_string(static_cast<long long>(m_access_status / 100)) + "xx";
+	}
+	const auto& request_duration = handystats::chrono::duration(delta, handystats::chrono::time_unit::USEC);
+
+	// request counters
+	HANDY_GAUGE_SET("thevoid.requests", 1);
+	if (!response_code_group.empty()) {
+		HANDY_GAUGE_SET("thevoid.requests." + response_code_group, 1);
+	}
+	if (!m_access_method.empty()) {
+		HANDY_GAUGE_SET("thevoid.requests." + m_access_method, 1);
+		if (!response_code_group.empty()) {
+			HANDY_GAUGE_SET("thevoid.requests." + m_access_method + "." + response_code_group, 1);
+		}
+	}
+
+	// request timings
+	HANDY_TIMER_SET("thevoid.requests.time", request_duration);
+	if (!response_code_group.empty()) {
+		HANDY_TIMER_SET("thevoid.requests." + response_code_group + ".time", request_duration);
+	}
+
+	if (!m_access_method.empty()) {
+		HANDY_TIMER_SET("thevoid.requests." + m_access_method + ".time", request_duration);
+		if (!response_code_group.empty()) {
+			HANDY_TIMER_SET("thevoid.requests." + m_access_method + "." + response_code_group + ".time", request_duration);
+		}
+	}
+#endif
+
 	CONNECTION_LOG(SWARM_LOG_INFO, "access_log_entry: method: %s, url: %s, local: %s, remote: %s, status: %d, received: %llu, sent: %llu, time: %llu us",
 		m_access_method.empty() ? "-" : m_access_method.c_str(),
 		m_access_url.empty() ? "-" : m_access_url.c_str(),
@@ -544,6 +589,7 @@ void connection<T>::handle_read(const boost::system::error_code &err, std::size_
 		}
 		if (m_handler) {
 			--m_server->m_data->active_connections_counter;
+			HANDY_COUNTER_DECREMENT("thevoid.active_connections");
 			m_handler.reset();
 		}
 		return;
@@ -670,6 +716,7 @@ void connection<T>::process_data(const char *begin, const char *end)
 
 				if (factory) {
 					++m_server->m_data->active_connections_counter;
+					HANDY_COUNTER_INCREMENT("thevoid.active_connections");
 					m_handler = factory->create();
 					m_handler->initialize(std::static_pointer_cast<reply_stream>(this->shared_from_this()));
 					SAFE_CALL(m_handler->on_headers(std::move(m_request)), "connection::process_data -> on_headers", SAFE_SEND_ERROR);

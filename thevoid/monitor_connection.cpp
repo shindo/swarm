@@ -20,6 +20,11 @@
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/prettywriter.h"
 
+#ifdef HAVE_HANDYSTATS
+#include <handystats/metrics_dump.hpp>
+#include <handystats/utils/rapidjson_writer.hpp>
+#endif
+
 #include <boost/bind.hpp>
 
 namespace ioremap {
@@ -61,6 +66,12 @@ std::string monitor_connection::get_information()
 
 	information.AddMember("connections", int(m_server->m_data->connections_counter), allocator);
 	information.AddMember("active-connections", int(m_server->m_data->active_connections_counter), allocator);
+
+#ifdef HAVE_HANDYSTATS
+	rapidjson::Value stats_value(rapidjson::kObjectType);
+	handystats::utils::rapidjson::fill_value(stats_value, *HANDY_METRICS_DUMP(), allocator);
+	information.AddMember("stats", stats_value, allocator);
+#endif
 
 	rapidjson::Value application;
 	application.SetObject();
