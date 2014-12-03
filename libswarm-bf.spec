@@ -1,6 +1,6 @@
 Summary:	Swarm
 Name:		libswarm
-Version:	0.7.0.10
+Version:	0.7.0.12
 Release:	1%{?dist}
 
 License:	GPLv2+
@@ -102,6 +102,24 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Wed Dec 03 2014 Danil Osherov <shindo@yandex-team.ru> - 0.7.0.12
+- Added collection of runtime statistics with handystats.
+- * List of added metrics:
+- * - 'thevoid.connections'
+- * - 'thevoid.active_connections'
+- * - 'thevoid.requests'
+- * - 'thevoid.requests.<code group>'
+- * - 'thevoid.requests.<method>'
+- * - 'thevoid.requests.<method>.<code group>'
+- * - 'thevoid.requests.time'
+- * - 'thevoid.requests.<code group>.time'
+- * - 'thevoid.requests.<method>.time'
+- * - 'thevoid.requests.<method>.<code group>.time'
+- * These metrics are in "frozen" state -- statistics will be collected
+- * only if application enables handystats' core.
+- * Moreover, these statistics will be collected according to application's
+- * handystats configuration.
+
 * Mon Oct 20 2014 Artem Sokolov <derikon@yandex-team.ru> - 0.7.0.11
 - Fixed output of http status in access log
 - * There was a following case:

@@ -1,3 +1,31 @@
+swarm (0.7.0.12) unstable; urgency=low
+
+  * Added collection of runtime statistics with handystats.
+
+    List of added metrics:
+      - connection counters:
+        - 'thevoid.connections'
+        - 'thevoid.active_connections'
+
+      - request counters
+        - 'thevoid.requests'
+        - 'thevoid.requests.<code group>'
+        - 'thevoid.requests.<method>'
+        - 'thevoid.requests.<method>.<code group>'
+
+      - request timers:
+        - 'thevoid.requests.time'
+        - 'thevoid.requests.<code group>.time'
+        - 'thevoid.requests.<method>.time'
+        - 'thevoid.requests.<method>.<code group>.time'
+
+    These metrics are in "frozen" state -- statistics will be collected
+    only if application enables handystats' core.
+    Moreover, these statistics will be collected according to application's
+    handystats configuration.
+
+ -- Danil Osherov <shindo@yandex-team.ru>  Wed, 03 Dec 2014 20:00:00 +0400
+
 swarm (0.7.0.11) unstable; urgency=low
 
   * Fixed output of http status in access log
