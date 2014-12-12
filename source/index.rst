@@ -12,6 +12,7 @@ Contents:
    :maxdepth: 2
 
    about
+   request
 
 
 Indices and tables
