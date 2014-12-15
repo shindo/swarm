@@ -13,6 +13,7 @@ Contents:
 
    about
    server
+   connection
    request
 
 
