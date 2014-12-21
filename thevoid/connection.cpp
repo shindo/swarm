@@ -530,6 +530,8 @@ void connection<T>::handle_read(const boost::system::error_code &err, std::size_
 		("size", bytes_transferred);
 
 	if (err) {
+		m_state |= broken;
+
 		if (m_access_status == 0 || !m_request_processing_was_finished) {
 			m_access_status = 499;
 		}
@@ -578,9 +580,7 @@ void connection<T>::process_data(const char *begin, const char *end)
 		m_access_received += (new_begin - begin);
 
 		if (!result) {
-			m_keep_alive = false;
-			m_unprocessed_begin = m_unprocessed_end = 0;
-			m_state = processing_request;
+			m_state |= broken;
 			send_error(http_response::bad_request);
 			return;
 		} else if (result) {
@@ -657,9 +657,7 @@ void connection<T>::process_data(const char *begin, const char *end)
 					("url", m_access_url);
 
 				// terminate connection on invalid url
-				m_keep_alive = false;
-				m_unprocessed_begin = m_unprocessed_end = 0;
-				m_state = processing_request;
+				m_state |= broken;
 				send_error(http_response::bad_request);
 				return;
 			} else {
@@ -682,9 +680,7 @@ void connection<T>::process_data(const char *begin, const char *end)
 						("url", m_access_url);
 
 					// terminate connection if appropriate handler is not found
-					m_keep_alive = false;
-					m_unprocessed_begin = m_unprocessed_end = 0;
-					m_state = processing_request;
+					m_state |= broken;
 					send_error(http_response::not_found);
 					return;
 				}
@@ -693,8 +689,21 @@ void connection<T>::process_data(const char *begin, const char *end)
 			m_state &= ~read_headers;
 			m_state |=  read_data;
 
-			process_data(new_begin, end);
-			// async_read is called by processed_data
+			if (new_begin != end) {
+				process_data(new_begin, end);
+			}
+			else if (m_content_length) {
+				async_read();
+			}
+			else {
+				// here all headers have been read and no body is presented
+				// thus, wait for handler to finish request processing
+				m_state &= ~read_data;
+
+				if (auto handler = try_handler())
+					SAFE_CALL(handler->on_close(boost::system::error_code()), "connection::process_data -> on_close", SAFE_SEND_ERROR);
+			}
+
 			return;
 		}
 
