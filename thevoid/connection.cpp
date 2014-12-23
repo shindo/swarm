@@ -219,6 +219,11 @@ swarm::logger connection<T>::create_logger()
 template <typename T>
 void connection<T>::close(const boost::system::error_code &err)
 {
+	// no need to call close() multiple times
+	if (m_close_invoked) {
+		return;
+	}
+
 	m_close_invoked = true;
 
 	CONNECTION_DEBUG("handler asks for closing connection")
