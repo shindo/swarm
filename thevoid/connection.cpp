@@ -18,6 +18,10 @@
 #include <vector>
 #include <boost/bind.hpp>
 #include <iostream>
+#include <cstdio>
+
+#include <handystats/measuring_points.hpp>
+#include <handystats/chrono.hpp>
 
 #include "server_p.hpp"
 #include "stream_p.hpp"
@@ -44,6 +48,7 @@ do { \
 	boost::system::error_code ignored_ec; \
 	m_socket.shutdown(boost::asio::socket_base::shutdown_both, ignored_ec); \
 	--m_server->m_data->active_connections_counter; \
+	HANDY_COUNTER_DECREMENT("thevoid.handlers"); \
 	m_handler.reset(); \
 	return; \
 } while (0)
@@ -124,10 +129,19 @@ connection<T>::~connection()
 		m_access_status = 597;
 		print_access_log();
 	}
-	if (auto handler = try_handler())
+	if (auto handler = try_handler()) {
+		HANDY_TIMER_SCOPE("thevoid.handler.on_close.time");
+		HANDY_COUNTER_SCOPE("thevoid.handler.on_close");
 		SAFE_CALL(handler->on_close(boost::system::error_code()), "connection::~connection -> on_close", SAFE_SEND_NONE);
+	}
 
 	CONNECTION_DEBUG("connection destroyed");
+
+	if (m_handler) {
+		HANDY_COUNTER_DECREMENT("thevoid.handlers");
+	}
+
+	HANDY_COUNTER_DECREMENT("thevoid.connections");
 }
 
 template <typename T>
@@ -149,6 +163,8 @@ void connection<T>::start(const std::string &local_endpoint)
 	m_access_remote = boost::lexical_cast<std::string>(m_endpoint);
 
 	++m_server->m_data->connections_counter;
+	HANDY_COUNTER_INCREMENT("thevoid.connections");
+	HANDY_COUNTER_INCREMENT("thevoid.connection.read_headers");
 
 	CONNECTION_INFO("connection to client opened")
 		("local", m_access_local)
@@ -259,6 +275,8 @@ std::shared_ptr<base_request_stream> connection<T>::try_handler()
 template <typename T>
 void connection<T>::want_more_impl()
 {
+	HANDY_COUNTER_SCOPE("thevoid.connection.active_threads");
+
 	CONNECTION_DEBUG("handler asks for more data from client")
 		("state", make_state_attribute());
 
@@ -279,6 +297,7 @@ void connection<T>::send_impl(buffer_info &&info)
 
 	if (!m_sending) {
 		m_sending = true;
+		HANDY_COUNTER_INCREMENT("thevoid.connection.at_write");
 		send_nolock();
 	}
 }
@@ -286,6 +305,10 @@ void connection<T>::send_impl(buffer_info &&info)
 template <typename T>
 void connection<T>::write_finished(const boost::system::error_code &err, size_t bytes_written)
 {
+	HANDY_COUNTER_SCOPE("thevoid.connection.active_threads");
+
+	HANDY_COUNTER_DECREMENT("thevoid.connection.at_write");
+	HANDY_COUNTER_INCREMENT("thevoid.connection.wrote_bytes", bytes_written);
 	m_access_sent += bytes_written;
 
 	CONNECTION_LOG(err ? SWARM_LOG_ERROR : SWARM_LOG_DEBUG, "write to client finished")
@@ -293,6 +316,7 @@ void connection<T>::write_finished(const boost::system::error_code &err, size_t 
 		("size", bytes_written);
 
 	if (err) {
+		HANDY_COUNTER_INCREMENT("thevoid.connection.write.failures");
 		decltype(m_outgoing) outgoing;
 		{
 			std::lock_guard<std::mutex> lock(m_outgoing_mutex);
@@ -300,17 +324,25 @@ void connection<T>::write_finished(const boost::system::error_code &err, size_t 
 		}
 
 		for (auto it = outgoing.begin(); it != outgoing.end(); ++it) {
-			if (it->handler)
+			if (it->handler) {
+				HANDY_TIMER_SCOPE("thevoid.connection.write.handle.time");
+				HANDY_COUNTER_SCOPE("thevoid.connection.write.handle");
 				it->handler(err);
+			}
 		}
 
 		m_access_status = 499;
 
-		if (auto handler = try_handler())
+		if (auto handler = try_handler()) {
+			HANDY_TIMER_SCOPE("thevoid.handler.on_close.time");
+			HANDY_COUNTER_SCOPE("thevoid.handler.on_close");
 			SAFE_CALL(handler->on_close(err), "connection::write_finished -> on_close", SAFE_SEND_NONE);
+		}
 		close_impl(err);
 		return;
 	}
+
+	HANDY_COUNTER_INCREMENT("thevoid.connection.write.successes");
 
 	do {
 		std::unique_lock<std::mutex> lock(m_outgoing_mutex);
@@ -340,6 +372,8 @@ void connection<T>::write_finished(const boost::system::error_code &err, size_t 
 			const auto handler = std::move(m_outgoing.front().handler);
 			m_outgoing.pop_front();
 			if (handler) {
+				HANDY_TIMER_SCOPE("thevoid.connection.write.handle.time");
+				HANDY_COUNTER_SCOPE("thevoid.connection.write.handle");
 				lock.unlock();
 				handler(err);
 				lock.lock();
@@ -351,6 +385,7 @@ void connection<T>::write_finished(const boost::system::error_code &err, size_t 
 
 	std::unique_lock<std::mutex> lock(m_outgoing_mutex);
 	if (m_outgoing.empty()) {
+		HANDY_COUNTER_DECREMENT("thevoid.connection.at_write");
 		m_sending = false;
 		return;
 	}
@@ -399,6 +434,8 @@ void connection<T>::send_nolock()
 {
 	buffers_array data(m_outgoing.begin(), m_outgoing.end());
 
+	HANDY_COUNTER_INCREMENT("thevoid.connection.at_write");
+
 	m_socket.async_write_some(data, detail::attributes_bind(m_logger, m_attributes, std::bind(
 		&connection::write_finished, this->shared_from_this(),
 		std::placeholders::_1, std::placeholders::_2)));
@@ -407,14 +444,18 @@ void connection<T>::send_nolock()
 template <typename T>
 void connection<T>::close_impl(const boost::system::error_code &err)
 {
+	HANDY_COUNTER_SCOPE("thevoid.connection.active_threads");
+
 	CONNECTION_DEBUG("handler closes connection")
 		("error", err.message())
 		("keep_alive", m_keep_alive)
 		("unreceived_size", m_content_length)
 		("state", make_state_attribute());
 
-	if (m_handler)
+	if (m_handler) {
 		--m_server->m_data->active_connections_counter;
+		HANDY_COUNTER_DECREMENT("thevoid.handlers");
+	}
 	m_handler.reset();
 	m_request_processing_was_finished = true;
 
@@ -457,6 +498,8 @@ template <typename T>
 void connection<T>::process_next()
 {
 	print_access_log();
+
+	HANDY_COUNTER_INCREMENT("thevoid.connection.read_headers");
 
 	// Start to wait new HTTP requests by this socket due to HTTP 1.1
 	m_state = read_headers | waiting_for_first_data;
@@ -502,6 +545,13 @@ void connection<T>::print_access_log()
 
 	unsigned long long delta = 1000000ull * (end.tv_sec - m_access_start.tv_sec) + end.tv_usec - m_access_start.tv_usec;
 
+	char request_status_name[100];
+	snprintf(request_status_name, sizeof(request_status_name), "thevoid.request.status.%d", m_access_status);
+	HANDY_COUNTER_INCREMENT(request_status_name);
+	HANDY_GAUGE_SET("thevoid.request.received", m_access_received);
+	HANDY_GAUGE_SET("thevoid.request.sent", m_access_sent);
+	HANDY_TIMER_SET("thevoid.request.time", handystats::chrono::duration(delta, handystats::chrono::time_unit::USEC));
+
 	CONNECTION_LOG(SWARM_LOG_INFO, "access_log_entry: method: %s, url: %s, local: %s, remote: %s, status: %d, received: %llu, sent: %llu, time: %llu us",
 		m_access_method.empty() ? "-" : m_access_method.c_str(),
 		m_access_url.empty() ? "-" : m_access_url.c_str(),
@@ -516,7 +566,11 @@ void connection<T>::print_access_log()
 template <typename T>
 void connection<T>::handle_read(const boost::system::error_code &err, std::size_t bytes_transferred)
 {
+	HANDY_COUNTER_SCOPE("thevoid.connection.active_threads");
+
 	m_at_read = false;
+
+	HANDY_COUNTER_DECREMENT("thevoid.connection.at_read");
 
 	// This message is not error in case of disconnect between requests
 	const bool error = err && !((m_state & waiting_for_first_data)
@@ -530,6 +584,17 @@ void connection<T>::handle_read(const boost::system::error_code &err, std::size_
 		("size", bytes_transferred);
 
 	if (err) {
+		// count number of failed reads
+		HANDY_COUNTER_INCREMENT("thevoid.connection.read.failures");
+
+		// update count of connection states
+		if (m_state & read_headers) {
+			HANDY_COUNTER_DECREMENT("thevoid.connection.read_headers");
+		}
+		else if (m_state & read_data) {
+			HANDY_COUNTER_DECREMENT("thevoid.connection.read_data");
+		}
+
 		if (m_access_status == 0 || !m_request_processing_was_finished) {
 			m_access_status = 499;
 		}
@@ -537,14 +602,20 @@ void connection<T>::handle_read(const boost::system::error_code &err, std::size_
 		print_access_log();
 
 		if (auto handler = try_handler()) {
+			HANDY_TIMER_SCOPE("thevoid.handler.on_close.time");
+			HANDY_COUNTER_SCOPE("thevoid.handler.on_close");
 			SAFE_CALL(handler->on_close(err), "connection::handle_read -> on_close", SAFE_SEND_NONE);
 		}
 		if (m_handler) {
 			--m_server->m_data->active_connections_counter;
+			HANDY_COUNTER_DECREMENT("thevoid.handlers");
 			m_handler.reset();
 		}
 		return;
 	}
+
+	HANDY_COUNTER_INCREMENT("thevoid.connection.read.successes");
+	HANDY_COUNTER_INCREMENT("thevoid.connection.read_bytes", bytes_transferred);
 
 	process_data(m_buffer.data(), m_buffer.data() + bytes_transferred);
 
@@ -563,6 +634,7 @@ void connection<T>::process_data(const char *begin, const char *end)
 
 	if (m_state & read_headers) {
 		if (m_state & waiting_for_first_data) {
+			HANDY_COUNTER_INCREMENT("thevoid.requests");
 			m_state &= ~waiting_for_first_data;
 			gettimeofday(&m_access_start, NULL);
 		}
@@ -578,12 +650,15 @@ void connection<T>::process_data(const char *begin, const char *end)
 		m_access_received += (new_begin - begin);
 
 		if (!result) {
+			HANDY_COUNTER_DECREMENT("thevoid.connection.read_headers");
+			HANDY_COUNTER_INCREMENT("thevoid.request.invalid_headers");
 			m_keep_alive = false;
 			m_unprocessed_begin = m_unprocessed_end = 0;
 			m_state = processing_request;
 			send_error(http_response::bad_request);
 			return;
 		} else if (result) {
+			HANDY_COUNTER_DECREMENT("thevoid.connection.read_headers");
 			m_access_method = m_request.method();
 			m_access_url = m_request.url().original();
 			uint64_t request_id = 0;
@@ -653,6 +728,7 @@ void connection<T>::process_data(const char *begin, const char *end)
 			m_request.set_remote_endpoint(m_access_remote);
 
 			if (!m_request.url().is_valid()) {
+				HANDY_COUNTER_INCREMENT("thevoid.request.invalid_url");
 				CONNECTION_ERROR("failed to parse invalid url")
 					("url", m_access_url);
 
@@ -673,13 +749,19 @@ void connection<T>::process_data(const char *begin, const char *end)
 
 				if (factory) {
 					++m_server->m_data->active_connections_counter;
+					HANDY_COUNTER_INCREMENT("thevoid.handlers");
 					m_handler = factory->create();
 					m_handler->initialize(std::static_pointer_cast<reply_stream>(this->shared_from_this()));
+
+					HANDY_TIMER_SCOPE("thevoid.handler.on_headers.time");
+					HANDY_COUNTER_SCOPE("thevoid.handler.on_headers");
 					SAFE_CALL(m_handler->on_headers(std::move(m_request)), "connection::process_data -> on_headers", SAFE_SEND_ERROR);
 				} else {
 					CONNECTION_ERROR("failed to find handler")
 						("method", m_access_method)
 						("url", m_access_url);
+
+					HANDY_COUNTER_INCREMENT("thevoid.request.invalid_handler");
 
 					// terminate connection if appropriate handler is not found
 					m_keep_alive = false;
@@ -692,6 +774,8 @@ void connection<T>::process_data(const char *begin, const char *end)
 
 			m_state &= ~read_headers;
 			m_state |=  read_data;
+
+			HANDY_COUNTER_INCREMENT("thevoid.connection.read_data");
 
 			process_data(new_begin, end);
 			// async_read is called by processed_data
@@ -706,6 +790,8 @@ void connection<T>::process_data(const char *begin, const char *end)
 
 		if (data_from_body) {
 			if (auto handler = try_handler()) {
+				HANDY_TIMER_SCOPE("thevoid.handler.on_data.time");
+				HANDY_COUNTER_SCOPE("thevoid.handler.on_data");
 				SAFE_CALL(processed_size = handler->on_data(boost::asio::buffer(begin, data_from_body)),
 					"connection::process_data -> on_data", SAFE_SEND_ERROR);
 			}
@@ -729,12 +815,17 @@ void connection<T>::process_data(const char *begin, const char *end)
 		} else if (m_content_length > 0) {
 			async_read();
 		} else {
+			HANDY_COUNTER_DECREMENT("thevoid.connection.read_data");
+
 			m_state &= ~read_data;
 			m_unprocessed_begin = begin + processed_size;
 			m_unprocessed_end = end;
 
-			if (auto handler = try_handler())
+			if (auto handler = try_handler()) {
+				HANDY_TIMER_SCOPE("thevoid.handler.on_close.time");
+				HANDY_COUNTER_SCOPE("thevoid.handler.on_close");
 				SAFE_CALL(handler->on_close(boost::system::error_code()), "connection::process_data -> on_close", SAFE_SEND_ERROR);
+			}
 
 			if (m_state & request_processed) {
 				process_next();
@@ -755,6 +846,8 @@ void connection<T>::async_read()
 
 	CONNECTION_DEBUG("request read from client")
 		("state", make_state_attribute());
+
+	HANDY_COUNTER_INCREMENT("thevoid.connection.at_read");
 
 	m_socket.async_read_some(boost::asio::buffer(m_buffer),
 		detail::attributes_bind(m_logger, m_attributes,
