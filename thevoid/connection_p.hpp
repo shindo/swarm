@@ -168,6 +168,7 @@ private:
 
 	//! Buffer for outgoing data
 	std::deque<buffer_info> m_outgoing;
+	bool m_write_forbidden;
 	std::mutex m_outgoing_mutex;
 
 	//! Buffer for incoming data.

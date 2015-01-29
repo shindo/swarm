@@ -102,7 +102,8 @@ connection<T>::connection(base_server *server, boost::asio::io_service &service,
 	m_state(read_headers | waiting_for_first_data),
 	m_sending(false),
 	m_keep_alive(false),
-	m_at_read(false)
+	m_at_read(false),
+	m_write_forbidden(false)
 {
 	m_unprocessed_begin = m_buffer.data();
 	m_unprocessed_end = m_buffer.data();
@@ -293,6 +294,12 @@ void connection<T>::send_impl(buffer_info &&info)
 {
 	std::lock_guard<std::mutex> lock(m_outgoing_mutex);
 
+	if (m_write_forbidden) {
+		lock.unlock();
+		info.handler(boost::asio::error::operation_aborted);
+		return;
+	}
+
 	m_outgoing.emplace_back(std::move(info));
 
 	if (!m_sending) {
@@ -320,6 +327,7 @@ void connection<T>::write_finished(const boost::system::error_code &err, size_t 
 		decltype(m_outgoing) outgoing;
 		{
 			std::lock_guard<std::mutex> lock(m_outgoing_mutex);
+			m_write_forbidden = true;
 			outgoing = std::move(m_outgoing);
 		}
 
