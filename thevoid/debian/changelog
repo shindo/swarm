@@ -1,3 +1,10 @@
+thevoid (3.0.0) unstable; urgency=low
+
+  * signal handling for stopping servers removed.
+  * version numbering scheme changed to MAJOR.MINOR.PATCH.
+
+ -- Danil Osherov <shindo@yandex-team.ru>  Mon, 09 Feb 2015 00:00:00 +0400
+
 swarm (0.7.3.0) unstable; urgency=low
 
   * call close() on socket along with shutdown() for graceful shutdown.
