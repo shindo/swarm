@@ -1,6 +1,6 @@
 Source: swarm
 Priority: extra
-Maintainer: Ruslan Nigmatullin <euroelessar@yandex.ru>
+Maintainer: Danil Osherov <shindo@yandex-team.ru>
 Build-Depends:
     cdbs,
     debhelper (>= 7),
