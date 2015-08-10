@@ -1,0 +1,265 @@
+ Fixed in 7.43.0 - June 17 2015
+
+Changes:
+
+    Added CURLOPT_PROXY_SERVICE_NAME
+    Added CURLOPT_SERVICE_NAME
+    Added CURLOPT_PIPEWAIT
+
+Bugfixes:
+
+    schannel.c: Fix possible SEC_E_BUFFER_TOO_SMALL error
+    schannel: Fix out of bounds array
+    schannel: fix regression in schannel_recv
+    share_init: fix OOM crash
+    openssl: Use TLS_client_method for OpenSSL 1.1.0+
+    HTTP-NTLM: fail auth on connection close instead of looping
+    curl_setup: Add macros for FOPEN_READTEXT, FOPEN_WRITETEXT
+    cookie: Stop exporting any-domain cookies
+    openssl: remove dummy callback use from SSL_CTX_set_verify()
+    openssl: remove SSL_get_session()-using code
+    openssl: removed USERDATA_IN_PWD_CALLBACK kludge
+    openssl: removed error string #ifdef
+    openssl: Fix verification of server-sent legacy intermediates
+    CURLOPT_OPENSOCKETFUNCTION: return error at once
+    urldata: store POST size in state.infilesize too
+    schannel: schannel_recv overhaul 
+
+Fixed in 7.42.1 - April 29 2015
+
+Bugfixes:
+
+    CURLOPT_HEADEROPT: default to separate
+
+Fixed in 7.42.0 - April 22 2015
+
+Changes:
+
+    add CURLOPT_PATH_AS_IS
+
+Bugfixes:
+
+    cookie: cookie parser out of boundary memory access
+    fix_hostname: zero length host name caused -1 index offset
+    http_done: close Negotiate connections when done
+    sws: timeout idle CONNECT connections
+    nss: improve error handling in Curl_nss_random()
+    nss: do not skip Curl_nss_seed() if data is NULL
+    multi: fix memory-leak on timeout (regression)
+    conncontrol: only log changes to the connection bit
+    multi: fix *getsock() with CONNECT
+    proxy: re-use proxy connections (regression)
+    http: always send Host: header as first header
+    hostip: Fix signal race in Curl_resolv_timeout
+    closesocket: call multi socket cb on close even with custom close
+    curl_easy_recv/send: make them work with the multi interface
+    curl_memory: make curl_memory.h the second-last header file loaded
+    multi: on a request completion, check all CONNECT_PEND transfers
+    multi: remove_handle: move pending connections
+    DNS: fix refreshing of obsolete dns cache entries
+    CURLOPT_RESOLVE: actually implement removals
+    lib/transfer.c: Remove factor of 8 from sleep time calculation
+
+Fixed in 7.41.0 - February 25 2015
+
+Bugfixes:
+
+    curl_schannel.c: mark session as removed from cache if not freed
+    Curl_pretransfer: reset expected transfer sizes
+    connect: fix a spurious connect failure on dual-stacked hosts
+
+Fixed in 7.40.0 - January 8 2015
+
+Changes:
+
+    Added support for HTTP over unix domain sockets, via CURLOPT_UNIX_SOCKET_PATH and --unix-socket
+
+Bugfixes:
+
+    url-parsing: reject CRLFs within URLs
+    multi: removed Curl_multi_set_easy_connection
+    multi: when leaving for timeout, close accordingly
+    multi: inform about closed sockets before they are closed
+    multi-uv.c: close the file handle after download
+    multi-single.c: switch to use curl_multi_wait
+    HTTP: don't abort connections with pending Negotiate authentication
+    schannel_recv: return the correct code
+    Curl_client_write(): chop long data, convert data only once
+    synctime.c: fixed timeserver URLs
+    curl_schannel.c: Data may be available before connection shutdown
+    sepheaders.c: Fixed resource leak on failure
+
+Fixed in 7.39.0 - November 5 2014
+
+Bugfixes:
+
+    curl_easy_duphandle: CURLOPT_COPYPOSTFIELDS read out of bounds
+    threaded-resolver: revert Curl_expire_latest() switch
+    curl_schannel.c: Fixed possible memory or handle leak
+
+Fixed in 7.38.0 - September 10 2014
+
+Bugfixes:
+
+    create_conn: prune dead connections
+    http: fix the Content-Range: parser
+    CONNECT: close proxy connections that fail
+    resolve: cache lookup for async resolvers
+    low-speed-limit: avoid timeout flood
+    multi: convert CURLM_STATE_CONNECT_PEND handling to a list
+    curl_multi_cleanup: remove superfluous NULL assigns
+
+Fixed in 7.37.1 - July 16 2014
+
+Bugfixes:
+
+    curl_easy_reset: reset the URL
+    getinfo: HTTP CONNECT code not reset between transfers
+
+Fixed in 7.37.0 - May 21 2014
+
+Changes:
+
+    CURLOPT_HEADEROPT: added
+
+Bugfixes:
+
+    HTTP: don't send Content-Length: 0 _and_ Expect: 100-continue
+    HTTP: fixed connection re-use
+
+Fixed in 7.36.0 - March 26 2014
+Release contains security-related bug fixes
+
+Changes:
+
+    added CURLOPT_EXPECT_100_TIMEOUT_MS
+
+Bugfixes:
+
+    SECURITY ADVISORY: wrong re-use of connections
+    100-continue: fix timeout condition
+    multi: make MAXCONNECTS default 4 x number of easy handles function
+    multi: ignore SIGPIPE internally
+    remote_port: allow connect to port 0
+
+Fixed in 7.35.0 - January 29 2014
+Release contains security-related bug fix
+
+Bugfixes:
+
+    threaded resolver: Use pthread_t * for curl_thread_t
+    conncache: fix possible dereference of null pointer
+    multi.c: fix possible dereference of null pointer
+    Curl_updateconninfo: don't do anything for UDP "connections"
+    HTTP POST: omit Content-Length if data size is unknown
+
+Fixed in 7.34.0 - December 17 2013
+Release contains security-related bug fix
+
+Bugfixes:
+
+    curl_multi_wait: accept 0 from multi_timeout() as valid timeout
+    curl_multi_cleanup: ignore SIGPIPE
+
+Fixed in 7.33.0 - October 14 2013
+
+Changes:
+
+    CURLM_ADDED_ALREADY: new error code
+
+Bugfixes:
+
+    multi_socket: improved 100-continue timeout handling
+    curl_multi_remove_handle: allow multiple removes
+    HTTP: Output http response 304 when modified time is too old 
+
+Fixed in 7.32.0 - August 12 2013
+
+Bugfixes:
+
+    curl_multi_wait: set revents for extra fds
+    curl_easy_pause: on unpause, trigger mulit-socket handling
+
+Fixed in 7.31.0 - June 22 2013
+Release contains security-related bug fix
+
+Bugfixes:
+
+    SECURITY VULNERABILITY: curl_easy_unescape() may parse data beyond the end of the input buffer
+    getinfo.c: reset timecond when clearing session-info variables
+    curl_easy_perform: avoid busy-looping
+    multi_socket: react on socket close immediately 
+
+Fixed in 7.30.0 - April 12 2013
+Release contains security-related bug fix
+
+Changes:
+
+    Added CURLMOPT_MAX_HOST_CONNECTIONS, CURLMOPT_MAX_TOTAL_CONNECTIONS for new multi interface connection handling
+
+Bugfixes:
+
+    DONE: consider callback-aborted transfers premature
+    multi: NULL pointer reference when closing an unused multi handle
+    easy: do not ignore poll() failures other than EINTR
+    CONNECT: count received headers
+    easy: acknowledge the CURLOPT_MAXCONNECTS option properly
+    easy interface: restore default MAXCONNECTS to 5
+    connect: treat a failed local bind of an interface as a non-fatal error
+
+Fixed in 7.29.0 - February 6 2013
+Release contains security-related bug fix
+
+Bugfixes:
+
+    curl_multi_remove_handle: fix memory leak triggered with CURLOPT_RESOLVE
+    multi: fix re-sending request on early connection close
+    fix HTTP CONNECT tunnel establishment upon delayed response
+
+Fixed in 7.28.1 - November 20 2012
+
+Bugfixes:
+
+    httpcustomheader.c: free the headers after use
+    memory leak: CURLOPT_RESOLVE with multi interface 
+
+Fixed in 7.28.0 - October 10 2012
+
+Changes:
+
+    multi: add curl_multi_wait()
+
+Bugfixes:
+
+    segfault on request retries
+    schannel crash on multi and easy handle cleanup
+    multi interface: CURLOPT_LOW_SPEED_* fix during rate limitation
+    curl_schannel: Removed buffer limit and optimized buffer strategy 
+
+
+Fixed in 7.25.0 - March 22 2012
+
+Bugfixes:
+
+    curl_easy_reset: reset the referer string
+
+Fixed in 7.24.0 - January 24 2012
+Release contains security-related bug fix
+
+Changes:
+
+    Added CURLOPT_ACCEPTTIMEOUT_MS
+
+Bugfixes:
+
+    multi interface: only use non-NULL socker function pointer
+    multi: handle timeouts on DNS servers by checking for new sockets
+    CURLOPT_DNS_SERVERS: fix return code
+    CURLOPT_RESOLVE: avoid adding already present host names
+
+Fixed in 7.23.0 - November 15 2011
+
+Bugfixes:
+
+    curl_multi_fdset: avoid FD_SET out of bounds
+    curl_multi_fdset: correct fdset with FTP PORT use
