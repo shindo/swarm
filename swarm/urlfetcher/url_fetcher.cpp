@@ -139,6 +139,13 @@ public:
 
 		CURLMcode rc;
 		do {
+			// Before version 7.20.0:
+			// If you receive CURLM_CALL_MULTI_PERFORM, this basically means that you should call
+			// curl_multi_socket_action(3) again before you wait for more actions on libcurl's sockets.
+			// You don't have to do it immediately, but the return code means that libcurl may have more
+			// data available to  return or that there may be more data to send off before it is "satisfied".
+			//
+			// But if we use libcurl >= 7.22.
 			rc = curl_multi_socket_action(multi, fd, action, &still_running);
 		} while (rc == CURLM_CALL_MULTI_PERFORM);
 		BH_LOG(logger, SWARM_LOG_DEBUG, "on_socket_event, socket: %d, rc: %d", fd, int(rc));
@@ -285,8 +292,33 @@ public:
 
 		curl_easy_setopt(info->easy, CURLOPT_HTTPHEADER, headers_list);
 
+		// 0 (meaning disabled) is the default value
 		curl_easy_setopt(info->easy, CURLOPT_VERBOSE, 0L);
+
+		// url should be in the following format:
+		//   scheme://host:port/path
+		// Check if swarm::url::to_string contains scheme
+		//
+		// It's possible to limit allowed protocols with
+		//   curl_easy_setopt(CURL *handle, CURLOPT_PROTOCOLS, long bitmask)
 		curl_easy_setopt(info->easy, CURLOPT_URL, info->reply.request().url().to_string().c_str());
+
+		// CURLOPT_TIMEOUT_MS(3):
+		//  Normally, name lookups can take a considerable time and limiting operations to less than
+		//  a few minutes risk aborting perfectly normal operations. This option may cause libcurl to
+		//  use the SIGALRM signal to timeout system calls.
+		//
+		//  If libcurl is built to use the standard system name resolver, that portion of the transfer
+		//  will still use full-second resolution for timeouts with a minimum timeout allowed of one second.
+		//
+		//  In unix-like systems, this might cause signals to be used unless CURLOPT_NOSIGNAL(3) is set.
+		//
+		//  If both CURLOPT_TIMEOUT(3) and CURLOPT_TIMEOUT_MS(3) are set, the value set last will be used.
+		//
+		//  Since this puts a hard limit for how long time a request is allowed to take, it has limited
+		//  use in dynamic use cases with varying transfer times. You are then advised to explore
+		//  CURLOPT_LOW_SPEED_LIMIT(3), CURLOPT_LOW_SPEED_TIME(3) or using CURLOPT_PROGRESSFUNCTION(3)
+		//  to implement your own timeout logic.
 		curl_easy_setopt(info->easy, CURLOPT_TIMEOUT_MS, info->reply.request().timeout());
 
 		// We can assume that curl >= 7.22.0
@@ -296,15 +328,49 @@ public:
 			 * If CURL don't support CURLOPT_CLOSESOCKETFUNCTION yet we should fallback
 			 * to dup-method to prevent memory leak
 			 */
+
 			curl_easy_setopt(info->easy, CURLOPT_OPENSOCKETFUNCTION, network_manager_private::open_callback);
 			curl_easy_setopt(info->easy, CURLOPT_OPENSOCKETDATA, &loop);
+
+			// According to CURLOPT_CLOSESOCKETFUNCTION(3):
+			//   Return 0 to signal success and 1 if there was an error.
+			//
+			// There's no guarantee about network_manager_private::close_callback return value.
 			curl_easy_setopt(info->easy, CURLOPT_CLOSESOCKETFUNCTION, network_manager_private::close_callback);
 			curl_easy_setopt(info->easy, CURLOPT_CLOSESOCKETDATA, &loop);
 		}
 #endif
+		// This function may be called with zero bytes data if the transferred file is empty.
+		//
+		// If your callback function returns CURL_WRITEFUNC_PAUSE it will cause this transfer to become paused.
+		// See curl_easy_pause(3) for further details.
 		curl_easy_setopt(info->easy, CURLOPT_WRITEFUNCTION, network_manager_private::write_callback);
+
+		// It's important to note that the callback will be invoked for the headers of all responses received
+		// after initiating a request and not just the final response. This includes all responses which occur
+		// during authentication negotiation. If you need to operate on only the headers from the final response,
+		// you will need to collect headers in the callback yourself and use HTTP status lines, for example, to
+		// delimit response boundaries.
+		//
+		// When  a  server sends a chunked encoded transfer, it may contain a trailer. That trailer is identical
+		// to a HTTP header and if such a trailer is received it is passed to the application using this callback
+		// as well. There are several ways to detect it being a trailer and not an ordinary header:
+		//  1) it comes after the response-body.
+		//  2) it comes after the final header line (CR LF)
+		//  3) a Trailer: header among the regular response-headers mention what header(s) to expect in the trailer.
 		curl_easy_setopt(info->easy, CURLOPT_HEADERFUNCTION, network_manager_private::header_callback);
 		curl_easy_setopt(info->easy, CURLOPT_HEADERDATA, info.get());
+
+		// If this option is set and libcurl has been built with the standard name resolver, timeouts will not
+		// occur while the name resolve takes place.  Consider building libcurl with the c-ares or threaded
+		// resolver backends to enable asynchronous DNS lookups, to enable timeouts for name resolves without the
+		// use of signals.
+		//
+		// Setting CURLOPT_NOSIGNAL(3) to 1 makes libcurl NOT ask the system to ignore SIGPIPE signals, which
+		// otherwise are sent by the system when trying to send data to a socket which is closed in the other end.
+		// libcurl makes an effort to never cause such SIGPIPEs to trigger, but some operating systems have no way
+		// to avoid them and even on those that have there are some corner cases when they may still happen,
+		// contrary to our desire.
 		curl_easy_setopt(info->easy, CURLOPT_NOSIGNAL, 1L);
 		//            curl_easy_setopt(info->easy, CURLOPT_ERRORBUFFER, info->error);
 
@@ -315,8 +381,38 @@ public:
 		curl_easy_setopt(info->easy, CURLOPT_PRIVATE, info.get());
 
 		if (info->reply.request().follow_location())
+			// CURLOPT_MAXREDIRS(3) can be used to limit the number of redirects libcurl will follow.
+			//
+			// libcurl can limit to what protocols it will automatically follow. The accepted protocols are set
+			// with CURLOPT_REDIR_PROTOCOLS(3) and it excludes the FILE protocol by default.
 			curl_easy_setopt(info->easy, CURLOPT_FOLLOWLOCATION, 1L);
 
+		// While  an  easy  handle  is added to a multi stack, you can not and you must not use
+		// curl_easy_perform(3) on that handle. After having removed the easy handle from the
+		// multi stack again, it is perfectly fine to use it with the easy interface again.
+		//
+		// If the easy handle is not set to use a shared (CURLOPT_SHARE(3)) or global DNS cache
+		// (CURLOPT_DNS_USE_GLOBAL_CACHE(3)), it will be made to use the DNS cache that is shared
+		// between all easy handles within the multi handle when curl_multi_add_handle(3) is called.
+		//
+		// When an easy interface is added to a multi handle, it will use a shared connection cache
+		// owned by the multi handle. Removing and adding new easy handles will not affect the pool
+		// of connections or the ability to do connection re-use.
+		//
+		// If you have CURLMOPT_TIMERFUNCTION set in the multi handle (and you really should if you're
+		// working event-based with curl_multi_socket_action(3) and friends), that callback will be
+		// called from within this function to ask for an updated timer so that your main event loop
+		// will get the activity on this handle to get started.
+		//
+		// The easy handle will remain added to the multi handle until you remove it again with
+		// curl_multi_remove_handle(3) - even when a transfer with that specific easy handle is
+		// completed.
+		//
+		// You should remove the easy handle from the multi stack before you terminate first the
+		// easy handle and then the multi handle:
+		//   1. curl_multi_remove_handle(3)
+		//   2. curl_easy_cleanup(3)
+		//   3. curl_multi_cleanup(3)
 		CURLMcode err = curl_multi_add_handle(multi, info.get()->easy);
 
 //		auto end = clock::now();
@@ -356,6 +452,24 @@ public:
 		 * for completed transfers in the inner "while" loop, and then remove
 		 * them in the outer "do-while" loop...
 		 */
+		/*
+		 * According to libcurl's example it's ok:
+		 * do {
+		 *   int msgq = 0;
+		 *   m = curl_multi_info_read(multi_handle, &msgq);
+		 *   if(m && (m->msg == CURLMSG_DONE)) {
+		 *     CURL *e = m->easy_handle;
+		 *     transfers--;
+		 *     curl_multi_remove_handle(multi_handle, e);
+		 *     curl_easy_cleanup(e);
+		 *   }
+		 * } while(m);
+		 *
+		 * Maybe related quote from curl_multi_remove_handle(3):
+		 * Removing an easy handle while being used is perfectly legal and will effectively
+		 * halt the transfer in progress involving that easy handle. All other easy handles
+		 * and transfers will remain unaffected.
+		 */
 
 		do {
 			easy = NULL;
@@ -369,6 +483,8 @@ public:
 			}
 
 			if (!easy)
+				// It's possible if curl_multi_info_read returns NULL.
+				// This way outer "do-while" loop's condition isn't needed.
 				break;
 
 			curl_easy_getinfo(easy, CURLINFO_PRIVATE, &info);
@@ -389,6 +505,7 @@ public:
 					info->stream->on_close(make_easy_error(msg->data.result));
 				}
 			} catch (...) {
+				// What exactly may throw?
 				curl_multi_remove_handle(multi, easy);
 				infos.erase(info);
 				delete info;
@@ -445,6 +562,10 @@ public:
 				return 0;
 		}
 
+		// according to the libcurl documentation:
+		// The callback MUST return 0.
+		//
+		// It's better to just call manager->loop.socket_request and return 0 expicitly
 		return manager->loop.socket_request(s, option, data);
 	}
 
