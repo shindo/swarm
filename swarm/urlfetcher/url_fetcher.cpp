@@ -113,6 +113,7 @@ public:
 			CURLMcode code = curl_multi_remove_handle(multi, info->easy);
 			if (code != CURLM_OK) {
 				BH_LOG(info->logger, SWARM_LOG_ERROR, "Failed to remove easy handle: %s", curl_multi_strerror(code));
+				// just log?
 			}
 			delete info;
 		}
@@ -122,6 +123,7 @@ public:
 
 	void set_socket_data(int socket, void *data)
 	{
+		// check return code
 		curl_multi_assign(multi, socket, data);
 	}
 
@@ -273,6 +275,10 @@ public:
 
 		if (request->command == POST) {
 			curl_easy_setopt(info->easy, CURLOPT_POST, true);
+			// This will set Content-Type to application/x-www-form-urlencoded
+			// CURLOPT_HTTPHEADER should be set to change Content-Type
+			//
+			// HTTP/1.1 implies the use of a "Expect: 100-continue"
 			curl_easy_setopt(info->easy, CURLOPT_POSTFIELDS, info->body.c_str());
 			curl_easy_setopt(info->easy, CURLOPT_POSTFIELDSIZE, info->body.size());
 		}
@@ -283,6 +289,7 @@ public:
 		curl_easy_setopt(info->easy, CURLOPT_URL, info->reply.request().url().to_string().c_str());
 		curl_easy_setopt(info->easy, CURLOPT_TIMEOUT_MS, info->reply.request().timeout());
 
+		// We can assume that curl >= 7.22.0
 #if LIBCURL_VERSION_NUM >= MAKE_VERSION(7, 21, 7)
 		IF_CURL_VERSION(7, 21, 7) {
 			/*
