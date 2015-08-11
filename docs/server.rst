@@ -83,6 +83,7 @@ Here is an example of server's configuration:
                 }
             ]
         },
+        "log_request_headers": ["User-Agent", "Authorization", "Cookie"],
         "application": {
             "remotes": ["localhost:1025:2"],
             "groups": [1, 2, 3]
@@ -160,6 +161,17 @@ Here:
       Logger section configures server's logger. TheVoid uses Blackhole for logging.
 
       See Blackhole's documentation for more information.
+
+- .. describe:: log_request_headers
+
+      Sets list of request's headers that should be logged on receiving new request from the client.
+      Headers names are case-insensitive.
+
+      Default value is empty list, that's no request's headers will be logged.
+
+      .. code-block:: javascript
+
+        "log_request_headers": ["User-Agent", "Authorization", "Cookie"]
 
 - .. describe:: application
 
